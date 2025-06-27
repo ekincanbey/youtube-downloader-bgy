@@ -85,13 +85,15 @@ app.get('/api/info', async (req, res) => {
 
         const info = await play.video_info(videoURL);
         
-        // --- HATA DÜZELTMESİ: Gelen Veriyi Kontrol Et ---
-        // Bazen YouTube'dan video bilgisi gelmeyebilir. Bu durumda `info.formats` tanımsız olur.
-        // forEach döngüsüne girmeden önce bunun bir dizi olduğunu kontrol ediyoruz.
-        if (!info || !Array.isArray(info.formats)) {
-            throw new Error('Video formatları alınamadı. Video özel, silinmiş veya bölge kısıtlamalı olabilir.');
+        // --- EN SAĞLAM HATA KONTROLÜ ---
+        // YouTube bazen video detaylarını verir ama indirilebilir formatları vermez.
+        // Bu durumu kontrol edip kullanıcıya net bir mesaj veriyoruz.
+        if (!info || !info.formats || !Array.isArray(info.formats) || info.formats.length === 0) {
+            // Sunucu tarafında sorunu anlamak için gelen veriyi logla
+            console.error("YouTube'dan format listesi alınamadı. Gelen bilgi:", JSON.stringify(info, null, 2));
+            throw new Error('Video formatları alınamadı. Bu video özel, silinmiş, bölge kısıtlamalı veya YouTube tarafından engelleniyor olabilir.');
         }
-        // --- HATA DÜZELTMESİ SONU ---
+        // --- HATA KONTROLÜ SONU ---
 
         const formatMap = new Map();
 
