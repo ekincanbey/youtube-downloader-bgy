@@ -1,7 +1,7 @@
 // Gerekli kütüphaneleri içeri aktarıyoruz
 const express = require('express');
 const cors = require('cors');
-const play = require('play-dl'); // Yeni ve daha güçlü motorumuz!
+const play = require('play-dl'); // Güçlü motorumuz
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('ffmpeg-static');
 const fs = require('fs');
@@ -20,16 +20,26 @@ if (!fs.existsSync(tempDir)) {
     fs.mkdirSync(tempDir);
 }
 
-// --- ÇÖKME SORUNUNU GİDEREN GÜVENLİ KOD ---
-// play-dl kütüphanesinin, YouTube'un IP bazlı engellemelerini
-// aşmak için kendi kimliğini almasını sağlıyoruz. Bu, programın çökmesini önler.
-play.getFreeClientID().then(() => {
-    console.log("YouTube için istemci kimliği başarıyla yapılandırıldı.");
-}).catch(err => {
-    // Bu hata programı çökertmez, sadece bir uyarı verir.
-    console.error("UYARI: YouTube için istemci kimliği alınamadı, engellemelerle karşılaşılabilir.", err.message);
-});
-// --- GÜVENLİ KOD SONU ---
+// --- NİHAİ ÇÖZÜM: COOKIE DOSYASI İLE GİRİŞ YAPMA ---
+// Bu kod, projenin ana dizininde bir 'cookies.txt' dosyası arar.
+// Eğer dosya varsa, play-dl bu cookie'leri kullanarak YouTube'a giriş yapar.
+const cookiePath = path.join(__dirname, 'cookies.txt');
+if (fs.existsSync(cookiePath)) {
+    console.log("'cookies.txt' dosyası bulundu. YouTube'a giriş yapılıyor...");
+    play.setToken({
+        youtube: {
+            cookie: fs.readFileSync(cookiePath, 'utf-8')
+        }
+    }).then(() => {
+        console.log("Cookie ile YouTube'a başarıyla giriş yapıldı.");
+    }).catch(e => {
+        console.error("Cookie ile giriş yapılamadı:", e.message);
+    });
+} else {
+    // Eğer cookie dosyası yoksa, bir uyarı ver.
+    console.warn("UYARI: 'cookies.txt' dosyası bulunamadı. YouTube engellemeleriyle karşılaşılabilir.");
+}
+// --- NİHAİ ÇÖZÜM SONU ---
 
 
 app.get('/', (req, res) => {
@@ -43,7 +53,6 @@ app.get('/api/info', async (req, res) => {
             return res.status(400).json({ error: 'Geçersiz veya eksik YouTube URLsi.' });
         }
 
-        // play.video_info çağrısı artık otomatik olarak kimlik kullanacak
         const info = await play.video_info(videoURL);
         const formatMap = new Map();
 
