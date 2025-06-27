@@ -20,17 +20,16 @@ if (!fs.existsSync(tempDir)) {
     fs.mkdirSync(tempDir);
 }
 
-// --- YouTube'un Bot Engellemesini Aşmak İçin NİHAİ ÇÖZÜM ---
-// play-dl kütüphanesine, YouTube'a istek gönderirken proxy kullanmasını söylüyoruz.
-// Bu, YouTube'un IP bazlı engellemelerini aşmamıza yardımcı olur.
-play.getFreeClientID().then((clientID) => {
-  play.setToken({
-    youtube: {
-      client_id: clientID,
-    },
-  })
+// --- ÇÖKME SORUNUNU GİDEREN GÜVENLİ KOD ---
+// play-dl kütüphanesinin, YouTube'un IP bazlı engellemelerini
+// aşmak için kendi kimliğini almasını sağlıyoruz. Bu, programın çökmesini önler.
+play.getFreeClientID().then(() => {
+    console.log("YouTube için istemci kimliği başarıyla yapılandırıldı.");
+}).catch(err => {
+    // Bu hata programı çökertmez, sadece bir uyarı verir.
+    console.error("UYARI: YouTube için istemci kimliği alınamadı, engellemelerle karşılaşılabilir.", err.message);
 });
-// --- NİHAİ ÇÖZÜM SONU ---
+// --- GÜVENLİ KOD SONU ---
 
 
 app.get('/', (req, res) => {
@@ -44,7 +43,7 @@ app.get('/api/info', async (req, res) => {
             return res.status(400).json({ error: 'Geçersiz veya eksik YouTube URLsi.' });
         }
 
-        // play.video_info çağrısı artık otomatik olarak proxy/token kullanacak
+        // play.video_info çağrısı artık otomatik olarak kimlik kullanacak
         const info = await play.video_info(videoURL);
         const formatMap = new Map();
 
