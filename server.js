@@ -1,12 +1,12 @@
 import express from 'express';
 import cors from 'cors';
-import { Innertube } from 'youtubei.js';
+import { Innertube, UniversalCache } from 'youtubei.js';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from 'ffmpeg-static';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { ProxyAgent, fetch } from 'undici';
+import { ProxyAgent, fetch, Request } from 'undici';
 
 // Temel kurulumlar
 ffmpeg.setFfmpegPath(ffmpegPath);
@@ -23,16 +23,30 @@ if (!fs.existsSync(tempDir)) {
 
 // --- PROXY KURULUMU - EN ÖNEMLİ KISIM ---
 // Proxy servisinden aldığın adresi buraya yapıştır veya Render'da Environment Variable olarak ayarla.
-const PROXY_URL = process.env.PROXY_URL || 'http://lmhmpajk:6a46y6l4iri6@198.23.239.134:6540';
+const PROXY_URL = process.env.PROXY_URL || 'http://216.10.27.159:6837:lmhmpajk:6a46y6l4iri6';
 
 if (!PROXY_URL || PROXY_URL.includes('proxy.sunucu.com')) {
     console.error("KRİTİK HATA: Lütfen server.js dosyasındaki PROXY_URL değişkenini kendi proxy bilgilerinizle güncelleyin!");
 }
 
 const youtube = await Innertube.create({
+    cache: new UniversalCache(false), // Önbelleği devre dışı bırak
     fetch: async (input, init) => {
-        const dispatcher = new ProxyAgent(PROXY_URL);
-        return fetch(input, { ...init, dispatcher });
+        // --- HATA DÜZELTMESİ: Gelen 'input'u doğru işle ---
+        // 'input' bir URL string'i veya bir Request nesnesi olabilir.
+        // Her iki durumu da ele alarak URL'yi doğru şekilde alıyoruz.
+        const url = input instanceof Request ? input.url : input;
+
+        const options = {
+            ...init,
+            // Request nesnesinden gelen orijinal ayarları koru
+            method: input.method || init?.method,
+            headers: input.headers || init?.headers,
+            body: input.body || init?.body,
+            dispatcher: new ProxyAgent(PROXY_URL)
+        };
+
+        return fetch(url, options);
     }
 });
 
@@ -82,14 +96,20 @@ app.get('/api/download', async (req, res) => {
         if (!videoId || !itag) throw new Error('videoId ve itag gerekli.');
 
         const info = await youtube.getInfo(videoId);
-        const title = info.basic_info.title?.replace(/[^\w\s]/gi, '') || 'video';
+        const title = info.basic_info.title?.replace(/[^\w\s.-]/gi, '') || 'video';
         
-        const videoFormat = info.streaming_data.adaptive_formats.find(f => f.itag == itag && f.has_video);
-        const audioFormat = info.streaming_data.adaptive_formats.filter(f => f.has_audio && !f.has_video).sort((a, b) => b.bitrate - a.bitrate)[0];
+        const allFormats = [...(info.streaming_data.formats || []), ...(info.streaming_data.adaptive_formats || [])];
+        const format = allFormats.find(f => f.itag == itag);
+        
+        if (!format) throw new Error('Seçilen format bulunamadı.');
 
-        if (videoFormat && audioFormat) { // Birleştirme gerekiyor
+        // Birleştirme gerektiren durum (sadece video içeren bir format seçildi)
+        if (format.has_video && !format.has_audio) {
+            const audioFormat = allFormats.filter(f => f.has_audio && !f.has_video).sort((a, b) => b.bitrate - a.bitrate)[0];
+            if (!audioFormat) throw new Error('Bu video için uygun bir ses formatı bulunamadı.');
+            
             console.log('Video ve ses birleştiriliyor...');
-            const videoStream = await youtube.download(videoId, { format: videoFormat });
+            const videoStream = await youtube.download(videoId, { format });
             const audioStream = await youtube.download(videoId, { format: audioFormat });
             
             await new Promise((resolve, reject) => {
@@ -104,24 +124,21 @@ app.get('/api/download', async (req, res) => {
             });
 
             res.download(finalOutputPath, `${title}.mp4`, () => {
-                fs.unlinkSync(finalOutputPath); // Dosyayı gönderdikten sonra sil
+                fs.unlinkSync(finalOutputPath);
             });
-
         } else { // Doğrudan indirme (sesli video veya sadece ses)
              console.log('Doğrudan indirme yapılıyor...');
-            const format = info.streaming_data.formats.find(f => f.itag == itag);
-            if (!format) throw new Error('Format bulunamadı.');
-
-            res.header('Content-Disposition', `attachment; filename="${title}.mp4"`);
-            const stream = await youtube.download(videoId, { format });
-            for await (const chunk of stream) {
+             const extension = format.has_video ? 'mp4' : 'mp3';
+             res.header('Content-Disposition', `attachment; filename="${title}.${extension}"`);
+             const stream = await youtube.download(videoId, { format });
+             for await (const chunk of stream) {
                 res.write(chunk);
-            }
-            res.end();
+             }
+             res.end();
         }
+
     } catch (error) {
         console.error('İndirme hatası:', error.message);
-        // Geçici dosyaları temizle
         if (fs.existsSync(tempVideoPath)) fs.unlinkSync(tempVideoPath);
         if (fs.existsSync(finalOutputPath)) fs.unlinkSync(finalOutputPath);
         if (!res.headersSent) {
