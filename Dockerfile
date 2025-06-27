@@ -1,25 +1,20 @@
-# Sağlam ve güncel bir Node.js versiyonunu temel alıyoruz (20. sürüm)
-# Bu, kütüphanelerin istediği versiyonla uyumludur.
+# En güncel ve uyumlu Node.js versiyonunu kullan
 FROM node:20-slim
 
-# Mutfak tezgahımızı hazırlıyoruz
+# Çalışma alanını belirle
 WORKDIR /usr/src/app
 
-# YouTube'un sunucu IP'lerini engellemesini zorlaştırmak için bir ortam değişkeni ayarlıyoruz.
-ENV YTDL_NO_UPDATE=1
-
-# En önemli fırınımızı (ffmpeg) kuruyoruz
-# Bu komut, video birleştirmek için gereken aracı sunucuya kurar
+# Video birleştirme fırını olan ffmpeg'i kur
 RUN apt-get update && apt-get install -y ffmpeg
 
-# Malzeme listemizi (package.json) kopyalıyoruz
+# Malzeme listesini kopyala
 COPY package*.json ./
 
-# Gerekli tüm malzemeleri (express, ytdl-core vb.) internetten indiriyoruz
+# Gerekli tüm malzemeleri indir
 RUN npm install --omit=dev
 
-# Projenin geri kalan tüm dosyalarını (server.js vb.) kopyalıyoruz
+# Projenin geri kalanını kopyala
 COPY . .
 
-# Ve son olarak, mutfağın ocağını yakıyoruz!
+# Sunucuyu başlat
 CMD [ "node", "server.js" ]

@@ -1,199 +1,133 @@
-// Gerekli kütüphaneleri içeri aktarıyoruz
-const express = require('express');
-const cors = require('cors');
-const play = require('play-dl');
-const ffmpeg = require('fluent-ffmpeg');
-const ffmpegPath = require('ffmpeg-static');
-const fs = require('fs');
-const path = require('path');
+import express from 'express';
+import cors from 'cors';
+import { Innertube } from 'youtubei.js';
+import ffmpeg from 'fluent-ffmpeg';
+import ffmpegPath from 'ffmpeg-static';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { ProxyAgent, fetch } from 'undici';
 
-// FFmpeg'in yolunu ayarlıyoruz
+// Temel kurulumlar
 ffmpeg.setFfmpegPath(ffmpegPath);
-
 const app = express();
 const PORT = process.env.PORT || 4000;
-
 app.use(cors());
 
+// Geçici dosyalar için klasör oluştur
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const tempDir = path.join(__dirname, 'temp');
 if (!fs.existsSync(tempDir)) {
     fs.mkdirSync(tempDir);
 }
 
-// --- YENİ VE GELİŞMİŞ COOKIE OKUMA FONKSİYONU ---
-// Bu fonksiyon, cookies.txt dosyasını okuyup doğru formata çevirir.
-const parseCookieFile = (filePath) => {
-    try {
-        if (!fs.existsSync(filePath)) return null;
+// --- PROXY KURULUMU - EN ÖNEMLİ KISIM ---
+// Proxy servisinden aldığın adresi buraya yapıştır veya Render'da Environment Variable olarak ayarla.
+const PROXY_URL = process.env.PROXY_URL || 'http://kullaniciadi:sifre@proxy.sunucu.com:port';
 
-        const fileContent = fs.readFileSync(filePath, 'utf-8');
-        const lines = fileContent.split('\n');
-        const cookies = [];
-
-        lines.forEach(line => {
-            // Yorumları ve boş satırları atla
-            if (line.trim() === '' || line.startsWith('#')) {
-                return;
-            }
-
-            const parts = line.split('\t');
-            // Netscape cookie formatı 7 bölümden oluşur
-            if (parts.length >= 6) {
-                const name = parts[5];
-                const value = parts[6] ? parts[6].trim() : ''; // Değerin sonundaki boşlukları temizle
-                cookies.push(`${name}=${value}`);
-            }
-        });
-
-        return cookies.join('; ');
-    } catch (e) {
-        console.error("Cookie dosyası okunurken/işlenirken hata oluştu:", e);
-        return null;
-    }
-};
-
-const cookiePath = path.join(__dirname, 'cookies.txt');
-const cookieString = parseCookieFile(cookiePath);
-
-if (cookieString) {
-    console.log("'cookies.txt' dosyası bulundu ve işlendi. YouTube'a giriş yapılıyor...");
-    play.setToken({
-        youtube: {
-            cookie: cookieString
-        }
-    }).then(() => {
-        console.log("Cookie ile YouTube'a başarıyla giriş yapıldı.");
-    }).catch(e => {
-        console.error("Cookie ile giriş yapılamadı:", e.message);
-    });
-} else {
-    console.warn("UYARI: 'cookies.txt' dosyası bulunamadı. YouTube engellemeleriyle karşılaşılabilir.");
+if (!PROXY_URL || PROXY_URL.includes('proxy.sunucu.com')) {
+    console.error("KRİTİK HATA: Lütfen server.js dosyasındaki PROXY_URL değişkenini kendi proxy bilgilerinizle güncelleyin!");
 }
-// --- YENİ OKUMA FONKSİYONU SONU ---
 
-
-app.get('/', (req, res) => {
-    res.send('YouTube İndirici Backend Sunucusu başarıyla çalışıyor!');
+const youtube = await Innertube.create({
+    fetch: async (input, init) => {
+        const dispatcher = new ProxyAgent(PROXY_URL);
+        return fetch(input, { ...init, dispatcher });
+    }
 });
 
+console.log('youtubei.js, proxy ile başarılı bir şekilde başlatıldı!');
+// --- PROXY KURULUMU SONU ---
+
+// API Testi
+app.get('/', (req, res) => res.send('Backend başarıyla çalışıyor.'));
+
+// Video bilgilerini getiren endpoint
 app.get('/api/info', async (req, res) => {
     try {
         const videoURL = req.query.url;
-        if (!videoURL || !play.yt_validate(videoURL)) {
-            return res.status(400).json({ error: 'Geçersiz veya eksik YouTube URLsi.' });
-        }
+        if (!videoURL) throw new Error('URL parametresi eksik.');
 
-        const info = await play.video_info(videoURL);
+        const info = await youtube.getInfo(videoURL);
+        if (!info.streaming_data) throw new Error('Bu video için format bilgisi alınamadı.');
+
+        const allFormats = [...(info.streaming_data.formats || []), ...(info.streaming_data.adaptive_formats || [])];
         
-        // --- EN SAĞLAM HATA KONTROLÜ ---
-        // YouTube bazen video detaylarını verir ama indirilebilir formatları vermez.
-        // Bu durumu kontrol edip kullanıcıya net bir mesaj veriyoruz.
-        if (!info || !info.formats || !Array.isArray(info.formats) || info.formats.length === 0) {
-            // Sunucu tarafında sorunu anlamak için gelen veriyi logla
-            console.error("YouTube'dan format listesi alınamadı. Gelen bilgi:", JSON.stringify(info, null, 2));
-            throw new Error('Video formatları alınamadı. Bu video özel, silinmiş, bölge kısıtlamalı veya YouTube tarafından engelleniyor olabilir.');
-        }
-        // --- HATA KONTROLÜ SONU ---
-
-        const formatMap = new Map();
-
-        info.formats.forEach(f => {
-            const hasVideo = f.mimeType.includes('video');
-            const hasAudio = f.mimeType.includes('audio');
-            
-            if (hasVideo && hasAudio) {
-                const qualityLabel = `MP4 - ${f.qualityLabel}`;
-                if (!formatMap.has(qualityLabel)) {
-                    formatMap.set(qualityLabel, { itag: f.itag, quality: qualityLabel, type: 'MP4' });
-                }
-            } else if (hasAudio && !hasVideo) {
-                const qualityLabel = `MP3 - ~${Math.round(f.bitrate / 1000)} kbps`;
-                 if (!formatMap.has(qualityLabel)) {
-                    formatMap.set(qualityLabel, { itag: f.itag, quality: qualityLabel, type: 'MP3' });
-                }
-            } else if (hasVideo && !hasAudio) {
-                const qualityLabel = `MP4 - ${f.qualityLabel} (Sesli Birleştirilmiş)`;
-                if (!formatMap.has(qualityLabel)) {
-                    formatMap.set(qualityLabel, { itag: f.itag, quality: qualityLabel, type: 'MP4-MERGED' });
-                }
-            }
-        });
-
-        let finalFormats = Array.from(formatMap.values());
-        finalFormats.sort((a, b) => {
-            const getRes = (q) => parseInt(q.match(/\d+p|\d+\s*kbps/)?.[0] || '0');
-            return getRes(b.quality) - getRes(a.quality);
-        });
+        const availableFormats = allFormats.map(f => ({
+            itag: f.itag,
+            quality: f.quality_label || `${Math.round(f.bitrate / 1000)}kbps`,
+            mimeType: f.mime_type,
+            hasVideo: !!f.has_video,
+            hasAudio: !!f.has_audio,
+        })).filter(f => f.quality);
 
         res.json({
-            title: info.video_details.title,
-            thumbnail: info.video_details.thumbnails[0].url,
-            formats: finalFormats
+            title: info.basic_info.title,
+            thumbnail: info.basic_info.thumbnail?.[0].url,
+            formats: availableFormats,
         });
-
     } catch (error) {
-        console.error("Bilgi alınırken hata:", error.message);
-        res.status(500).json({ error: error.message || 'Video bilgileri alınamadı. YouTube bu isteği engellemiş olabilir.' });
+        console.error('Bilgi alınırken hata:', error.message);
+        res.status(500).json({ error: error.message });
     }
 });
 
+// İndirme endpoint'i
 app.get('/api/download', async (req, res) => {
-    const timestamp = Date.now();
-    const videoPath = path.join(tempDir, `video-${timestamp}.mp4`);
-    const audioPath = path.join(tempDir, `audio-${timestamp}.m4a`);
-    let finalPath = '';
-
-    const cleanup = () => {
-        if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
-        if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
-        if (finalPath && fs.existsSync(finalPath)) fs.unlinkSync(finalPath);
-    };
+    const { videoId, itag } = req.query;
+    const tempVideoPath = path.join(tempDir, `video_${Date.now()}.mp4`);
+    const finalOutputPath = path.join(tempDir, `final_${Date.now()}.mp4`);
 
     try {
-        const { url, itag, type } = req.query;
-        if (!url || !play.yt_validate(url)) throw new Error('Geçersiz URL');
+        if (!videoId || !itag) throw new Error('videoId ve itag gerekli.');
+
+        const info = await youtube.getInfo(videoId);
+        const title = info.basic_info.title?.replace(/[^\w\s]/gi, '') || 'video';
         
-        const sanitizedTitle = (await play.video_info(url)).video_details.title.replace(/[<>:"/\\|?*]+/g, '-');
-        const streamOptions = { quality: parseInt(itag) };
+        const videoFormat = info.streaming_data.adaptive_formats.find(f => f.itag == itag && f.has_video);
+        const audioFormat = info.streaming_data.adaptive_formats.filter(f => f.has_audio && !f.has_video).sort((a, b) => b.bitrate - a.bitrate)[0];
 
-        if (type === 'MP4-MERGED') {
-            const videoStream = await play.stream(url, { quality: parseInt(itag) });
-            const audioStream = await play.stream(url, { quality: 'highestaudio' });
-
-            await new Promise((resolve, reject) => videoStream.stream.pipe(fs.createWriteStream(videoPath)).on('finish', resolve).on('error', reject));
-            await new Promise((resolve, reject) => audioStream.stream.pipe(fs.createWriteStream(audioPath)).on('finish', resolve).on('error', reject));
+        if (videoFormat && audioFormat) { // Birleştirme gerekiyor
+            console.log('Video ve ses birleştiriliyor...');
+            const videoStream = await youtube.download(videoId, { format: videoFormat });
+            const audioStream = await youtube.download(videoId, { format: audioFormat });
             
-            finalPath = path.join(tempDir, `final-${timestamp}.mp4`);
             await new Promise((resolve, reject) => {
-                ffmpeg().addInput(videoPath).addInput(audioPath).videoCodec('copy').audioCodec('aac').save(finalPath)
-                .on('end', resolve).on('error', reject);
-            });
-            
-            res.download(finalPath, `${sanitizedTitle}.mp4`, (err) => {
-                if (err) console.error("Gönderim hatası:", err);
-                cleanup();
+                ffmpeg()
+                    .input(videoStream)
+                    .videoCodec('copy')
+                    .input(audioStream)
+                    .audioCodec('copy')
+                    .save(finalOutputPath)
+                    .on('error', reject)
+                    .on('end', resolve);
             });
 
-        } else if (type === 'MP3') {
-            res.header('Content-Disposition', `attachment; filename="${sanitizedTitle}.mp3"`);
-            const stream = await play.stream(url, streamOptions);
-            ffmpeg(stream.stream).audioBitrate(128).format('mp3').pipe(res);
+            res.download(finalOutputPath, `${title}.mp4`, () => {
+                fs.unlinkSync(finalOutputPath); // Dosyayı gönderdikten sonra sil
+            });
 
-        } else { // Normal MP4
-            res.header('Content-Disposition', `attachment; filename="${sanitizedTitle}.mp4"`);
-            const stream = await play.stream(url, streamOptions);
-            stream.stream.pipe(res);
+        } else { // Doğrudan indirme (sesli video veya sadece ses)
+             console.log('Doğrudan indirme yapılıyor...');
+            const format = info.streaming_data.formats.find(f => f.itag == itag);
+            if (!format) throw new Error('Format bulunamadı.');
+
+            res.header('Content-Disposition', `attachment; filename="${title}.mp4"`);
+            const stream = await youtube.download(videoId, { format });
+            for await (const chunk of stream) {
+                res.write(chunk);
+            }
+            res.end();
         }
-
     } catch (error) {
-        console.error("İndirme hatası:", error.message);
-        cleanup();
+        console.error('İndirme hatası:', error.message);
+        // Geçici dosyaları temizle
+        if (fs.existsSync(tempVideoPath)) fs.unlinkSync(tempVideoPath);
+        if (fs.existsSync(finalOutputPath)) fs.unlinkSync(finalOutputPath);
         if (!res.headersSent) {
             res.status(500).json({ error: 'İndirme sırasında bir hata oluştu.' });
         }
     }
 });
 
-app.listen(PORT, () => {
-    console.log(`Sunucu http://localhost:${PORT} adresinde başarıyla başlatıldı.`);
-});
+app.listen(PORT, () => console.log(`Sunucu port ${PORT} üzerinde çalışıyor...`));
