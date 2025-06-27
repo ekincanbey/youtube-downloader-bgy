@@ -84,6 +84,15 @@ app.get('/api/info', async (req, res) => {
         }
 
         const info = await play.video_info(videoURL);
+        
+        // --- HATA DÜZELTMESİ: Gelen Veriyi Kontrol Et ---
+        // Bazen YouTube'dan video bilgisi gelmeyebilir. Bu durumda `info.formats` tanımsız olur.
+        // forEach döngüsüne girmeden önce bunun bir dizi olduğunu kontrol ediyoruz.
+        if (!info || !Array.isArray(info.formats)) {
+            throw new Error('Video formatları alınamadı. Video özel, silinmiş veya bölge kısıtlamalı olabilir.');
+        }
+        // --- HATA DÜZELTMESİ SONU ---
+
         const formatMap = new Map();
 
         info.formats.forEach(f => {
@@ -122,7 +131,7 @@ app.get('/api/info', async (req, res) => {
 
     } catch (error) {
         console.error("Bilgi alınırken hata:", error.message);
-        res.status(500).json({ error: 'Video bilgileri alınamadı. YouTube bu isteği engellemiş olabilir.' });
+        res.status(500).json({ error: error.message || 'Video bilgileri alınamadı. YouTube bu isteği engellemiş olabilir.' });
     }
 });
 
