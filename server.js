@@ -21,37 +21,44 @@ if (!fs.existsSync(tempDir)) {
     fs.mkdirSync(tempDir);
 }
 
-// --- PROXY KURULUMU - EN ÖNEMLİ KISIM ---
-// Proxy servisinden aldığın adresi buraya yapıştır veya Render'da Environment Variable olarak ayarla.
-const PROXY_URL = process.env.PROXY_URL || 'http://lmhmpajk:6a46y6l4iri6@216.10.27.159:6837';
+// --- PROXY KURULUMU - EN ÖNEMLİ VE TEK AYARLANACAK YER ---
+// Webshare'den veya başka bir servisten aldığın proxy adresini buraya yapıştır.
+// ÖNEMLİ: Formatın http://kullaniciadi:sifre@adres:port şeklinde olduğundan emin ol.
+const PROXY_URL = process.env.PROXY_URL || 'http://lmhmpajk:6a46y6l4iri6@198.23.239.134:6540'; // ÖRNEK: Burayı KENDİ proxy adresinle değiştir.
 
-if (!PROXY_URL || PROXY_URL.includes('proxy.sunucu.com')) {
-    console.error("KRİTİK HATA: Lütfen server.js dosyasındaki PROXY_URL değişkenini kendi proxy bilgilerinizle güncelleyin!");
+// --- KESİN KONTROL ---
+// Eğer proxy adresi değiştirilmemişse, programı çalıştırma ve net bir hata ver.
+if (!PROXY_URL || PROXY_URL.includes('kullaniciadi:sifre') || PROXY_URL.length < 20) {
+    console.error(`
+    \n\n
+    *****************************************************************************************
+    * *
+    * K R İ T İ K   H A T A :   P R O X Y   A D R E S İ   A Y A R L A N M A M I Ş !         *
+    * *
+    * Lütfen 'server.js' dosyasını açıp, 'PROXY_URL' değişkenini                          *
+    * kendi gerçek proxy adresinizle güncelleyin ve değişikliği GitHub'a gönderin.         *
+    * *
+    *****************************************************************************************
+    \n\n
+    `);
+    // Programın çökmesini ve Render'ın sürekli yeniden başlatmasını önlemek için düzgün bir şekilde çıkış yap.
+    process.exit(1); 
 }
+// --- KONTROL SONU ---
+
 
 const youtube = await Innertube.create({
     cache: new UniversalCache(false), // Önbelleği devre dışı bırak
-    fetch: async (input, init) => {
-        // --- HATA DÜZELTMESİ: Gelen 'input'u doğru işle ---
-        // 'input' bir URL string'i veya bir Request nesnesi olabilir.
-        // Her iki durumu da ele alarak URL'yi doğru şekilde alıyoruz.
-        const url = input instanceof Request ? input.url : input;
-
-        const options = {
+    fetch: (url, init) => {
+        // Bu basit ve sağlam fetch yapısı, tüm istekleri proxy üzerinden yönlendirir.
+        return fetch(url, {
             ...init,
-            // Request nesnesinden gelen orijinal ayarları koru
-            method: input.method || init?.method,
-            headers: input.headers || init?.headers,
-            body: input.body || init?.body,
-            dispatcher: new ProxyAgent(PROXY_URL)
-        };
-
-        return fetch(url, options);
-    }
+            dispatcher: new ProxyAgent(PROXY_URL),
+        });
+    },
 });
 
 console.log('youtubei.js, proxy ile başarılı bir şekilde başlatıldı!');
-// --- PROXY KURULUMU SONU ---
 
 // API Testi
 app.get('/', (req, res) => res.send('Backend başarıyla çalışıyor.'));
