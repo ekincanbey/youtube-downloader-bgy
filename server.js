@@ -1,7 +1,7 @@
 // Gerekli kütüphaneleri içeri aktarıyoruz
 const express = require('express');
 const cors = require('cors');
-const play = require('play-dl'); // Güçlü motorumuz
+const play = require('play-dl');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('ffmpeg-static');
 const fs = require('fs');
@@ -20,15 +20,46 @@ if (!fs.existsSync(tempDir)) {
     fs.mkdirSync(tempDir);
 }
 
-// --- NİHAİ ÇÖZÜM: COOKIE DOSYASI İLE GİRİŞ YAPMA ---
-// Bu kod, projenin ana dizininde bir 'cookies.txt' dosyası arar.
-// Eğer dosya varsa, play-dl bu cookie'leri kullanarak YouTube'a giriş yapar.
+// --- YENİ VE GELİŞMİŞ COOKIE OKUMA FONKSİYONU ---
+// Bu fonksiyon, cookies.txt dosyasını okuyup doğru formata çevirir.
+const parseCookieFile = (filePath) => {
+    try {
+        if (!fs.existsSync(filePath)) return null;
+
+        const fileContent = fs.readFileSync(filePath, 'utf-8');
+        const lines = fileContent.split('\n');
+        const cookies = [];
+
+        lines.forEach(line => {
+            // Yorumları ve boş satırları atla
+            if (line.trim() === '' || line.startsWith('#')) {
+                return;
+            }
+
+            const parts = line.split('\t');
+            // Netscape cookie formatı 7 bölümden oluşur
+            if (parts.length >= 6) {
+                const name = parts[5];
+                const value = parts[6] ? parts[6].trim() : ''; // Değerin sonundaki boşlukları temizle
+                cookies.push(`${name}=${value}`);
+            }
+        });
+
+        return cookies.join('; ');
+    } catch (e) {
+        console.error("Cookie dosyası okunurken/işlenirken hata oluştu:", e);
+        return null;
+    }
+};
+
 const cookiePath = path.join(__dirname, 'cookies.txt');
-if (fs.existsSync(cookiePath)) {
-    console.log("'cookies.txt' dosyası bulundu. YouTube'a giriş yapılıyor...");
+const cookieString = parseCookieFile(cookiePath);
+
+if (cookieString) {
+    console.log("'cookies.txt' dosyası bulundu ve işlendi. YouTube'a giriş yapılıyor...");
     play.setToken({
         youtube: {
-            cookie: fs.readFileSync(cookiePath, 'utf-8')
+            cookie: cookieString
         }
     }).then(() => {
         console.log("Cookie ile YouTube'a başarıyla giriş yapıldı.");
@@ -36,10 +67,9 @@ if (fs.existsSync(cookiePath)) {
         console.error("Cookie ile giriş yapılamadı:", e.message);
     });
 } else {
-    // Eğer cookie dosyası yoksa, bir uyarı ver.
     console.warn("UYARI: 'cookies.txt' dosyası bulunamadı. YouTube engellemeleriyle karşılaşılabilir.");
 }
-// --- NİHAİ ÇÖZÜM SONU ---
+// --- YENİ OKUMA FONKSİYONU SONU ---
 
 
 app.get('/', (req, res) => {
