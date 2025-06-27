@@ -23,7 +23,7 @@ if (!fs.existsSync(tempDir)) {
 
 // --- PROXY KURULUMU - EN ÖNEMLİ KISIM ---
 // Proxy servisinden aldığın adresi buraya yapıştır veya Render'da Environment Variable olarak ayarla.
-const PROXY_URL = process.env.PROXY_URL || 'http://kullaniciadi:sifre@proxy.sunucu.com:port';
+const PROXY_URL = process.env.PROXY_URL || 'http://lmhmpajk:6a46y6l4iri6@216.10.27.159:6837';
 
 if (!PROXY_URL || PROXY_URL.includes('proxy.sunucu.com')) {
     console.error("KRİTİK HATA: Lütfen server.js dosyasındaki PROXY_URL değişkenini kendi proxy bilgilerinizle güncelleyin!");
