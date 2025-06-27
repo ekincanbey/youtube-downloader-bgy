@@ -20,6 +20,19 @@ if (!fs.existsSync(tempDir)) {
     fs.mkdirSync(tempDir);
 }
 
+// --- YouTube'un Bot Engellemesini Aşmak İçin NİHAİ ÇÖZÜM ---
+// play-dl kütüphanesine, YouTube'a istek gönderirken proxy kullanmasını söylüyoruz.
+// Bu, YouTube'un IP bazlı engellemelerini aşmamıza yardımcı olur.
+play.getFreeClientID().then((clientID) => {
+  play.setToken({
+    youtube: {
+      client_id: clientID,
+    },
+  })
+});
+// --- NİHAİ ÇÖZÜM SONU ---
+
+
 app.get('/', (req, res) => {
     res.send('YouTube İndirici Backend Sunucusu başarıyla çalışıyor!');
 });
@@ -31,13 +44,14 @@ app.get('/api/info', async (req, res) => {
             return res.status(400).json({ error: 'Geçersiz veya eksik YouTube URLsi.' });
         }
 
+        // play.video_info çağrısı artık otomatik olarak proxy/token kullanacak
         const info = await play.video_info(videoURL);
         const formatMap = new Map();
 
         info.formats.forEach(f => {
             const hasVideo = f.mimeType.includes('video');
             const hasAudio = f.mimeType.includes('audio');
-
+            
             if (hasVideo && hasAudio) {
                 const qualityLabel = `MP4 - ${f.qualityLabel}`;
                 if (!formatMap.has(qualityLabel)) {
@@ -89,10 +103,8 @@ app.get('/api/download', async (req, res) => {
     try {
         const { url, itag, type } = req.query;
         if (!url || !play.yt_validate(url)) throw new Error('Geçersiz URL');
-
-        const info = await play.video_info(url);
-        const sanitizedTitle = info.video_details.title.replace(/[<>:"/\\|?*]+/g, '-');
-
+        
+        const sanitizedTitle = (await play.video_info(url)).video_details.title.replace(/[<>:"/\\|?*]+/g, '-');
         const streamOptions = { quality: parseInt(itag) };
 
         if (type === 'MP4-MERGED') {
@@ -101,13 +113,13 @@ app.get('/api/download', async (req, res) => {
 
             await new Promise((resolve, reject) => videoStream.stream.pipe(fs.createWriteStream(videoPath)).on('finish', resolve).on('error', reject));
             await new Promise((resolve, reject) => audioStream.stream.pipe(fs.createWriteStream(audioPath)).on('finish', resolve).on('error', reject));
-
+            
             finalPath = path.join(tempDir, `final-${timestamp}.mp4`);
             await new Promise((resolve, reject) => {
                 ffmpeg().addInput(videoPath).addInput(audioPath).videoCodec('copy').audioCodec('aac').save(finalPath)
                 .on('end', resolve).on('error', reject);
             });
-
+            
             res.download(finalPath, `${sanitizedTitle}.mp4`, (err) => {
                 if (err) console.error("Gönderim hatası:", err);
                 cleanup();
